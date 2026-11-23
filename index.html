@@ -808,8 +808,35 @@ const Admin = {
     out.innerHTML = `<div class="qrbox"><div id="qrc"></div><code>${esc(url)}</code><div id="qrdl"></div></div>`;
     const draw = () => {
       new QRCode($('#qrc'), {text:url, width:240, height:240, colorDark:'#3A2A22', colorLight:'#ffffff', correctLevel:QRCode.CorrectLevel.M});
-      setTimeout(() => { const c = $('#qrc canvas'), img = $('#qrc img'); const src = (img && img.src && img.src.startsWith('data:')) ? img.src : (c ? c.toDataURL('image/png') : '');
-        if(src) $('#qrdl').innerHTML = `<a class="btn sm" href="${src}" download="wotodo-ilsan-qr-${spot}.png">QR 이미지 저장</a>`; }, 300);
+      setTimeout(() => {
+        const c = $('#qrc canvas'); if(!c) return;
+        // 인쇄용: 흰 여백(QR 인식에 필요) + 아래에 위치 이름
+        const S = 720, pad = 72, out = document.createElement('canvas');
+        out.width = S; out.height = S + 70;
+        const g = out.getContext('2d');
+        g.fillStyle = '#ffffff'; g.fillRect(0, 0, out.width, out.height);
+        g.imageSmoothingEnabled = false;
+        g.drawImage(c, pad, pad, S - pad*2, S - pad*2);
+        g.fillStyle = '#3A2A22'; g.font = 'bold 34px sans-serif'; g.textAlign = 'center';
+        g.fillText('WOTODO · ' + spot, S/2, S + 20);
+        const dataUrl = out.toDataURL('image/png'), fname = `wotodo-ilsan-qr-${spot}.png`;
+        // 화면에 이미지로 보여주기 → 아이폰에서 길게 눌러 '사진에 저장' 가능
+        $('#qrc').innerHTML = `<img src="${dataUrl}" alt="QR" style="width:240px;height:auto;display:block;-webkit-touch-callout:default">`;
+        $('#qrdl').innerHTML = `<button class="btn sm" id="qr-save">QR 이미지 저장</button><p class="hint" style="text-align:center;margin-top:6px">저장이 안 되면 QR 그림을 길게 눌러 '사진 앱에 저장'을 고르세요.</p>`;
+        $('#qr-save').onclick = () => out.toBlob(async blob => {
+          if(!blob) return toast('이미지를 만들지 못했어요');
+          const file = new File([blob], fname, {type:'image/png'});
+          // 휴대폰: 공유창 → '이미지 저장'
+          if(navigator.canShare && navigator.canShare({files:[file]})){
+            try { await navigator.share({files:[file]}); return; }
+            catch(e){ if(e && e.name === 'AbortError') return; }
+          }
+          // 컴퓨터: 파일로 내려받기
+          const u = URL.createObjectURL(blob), a = document.createElement('a');
+          a.href = u; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(u), 4000);
+        }, 'image/png');
+      }, 300);
     };
     if(window.QRCode) return draw();
     const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
