@@ -247,6 +247,8 @@ details.box[open] summary::after{content:"－"}
 .sticky-cta{position:fixed;left:0;right:0;bottom:0;z-index:30;padding:12px 16px calc(18px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 72%,rgba(248,241,228,0))}
 .sticky-cta .bigbtn{max-width:488px;margin:0 auto}
 .mapwrap{position:fixed;inset:0;background:#F1EEE9}
+.maplibregl-ctrl-attrib{font-size:10px}
+.maplibregl-canvas{outline:none}
 #lmap{position:absolute;inset:0}
 .leaflet-container{background:#F1EEE9}
 .leaflet-tile-pane{filter:grayscale(1) brightness(1.1) contrast(.78);opacity:.85}
@@ -266,7 +268,7 @@ details.box[open] summary::after{content:"－"}
 .mpin.sel.partner{color:var(--ink)}
 .mpin.sel::after{content:"";position:absolute;left:50%;bottom:-13px;width:2px;height:10px;background:currentColor;transform:translateX(-50%)}
 .mpin.sel.deal::after{background:#E2572A}.mpin.sel.partner::after{background:#C9902A}
-.leaflet-container .mpin.sel img{width:32px!important;max-width:32px!important;height:auto!important;background:#fff;border-radius:999px;padding:3px 2px!important}
+.mpin.sel img{width:32px!important;max-width:32px!important;height:auto!important;background:#fff;border-radius:999px;padding:3px 2px!important}
 .mlegend{position:absolute;left:12px;bottom:calc(140px + env(safe-area-inset-bottom));z-index:500;display:flex;gap:12px;align-items:center;background:#fff;border-radius:12px;padding:8px 12px;font-size:12px;font-weight:600;color:#3E3129;box-shadow:0 2px 8px rgba(46,34,27,.12)}
 .mlegend span{display:flex;align-items:center;gap:6px}
 .mlegend i{width:12px;height:12px;border-radius:50%;display:inline-block}
@@ -527,7 +529,7 @@ if(QR_SRC && !SS.get('il_scan_logged')){ SS.set('il_scan_logged', true); SS.set(
 
 function route(){
   clearInterval(timer); closeSheet();
-  if(Customer.map && location.hash !== '#map'){ try{ Customer.map.remove(); }catch(e){} Customer.map = null; Customer.pinLayer = null; Customer.meMarker = null; }
+  if(Customer.map && location.hash !== '#map'){ try{ Customer.map.remove(); }catch(e){} Customer.map = null; Customer.pins = []; Customer.meMarker = null; }
   const h = location.hash.replace('#','');
   if(h !== '' && !h.startsWith('store-')) window.scrollTo(0,0);
   if(h==='owner') return Owner.render();
@@ -770,6 +772,114 @@ function loadLeaflet(){
   return loadLeaflet.p;
 }
 const ILSAN_CENTER = [37.6584, 126.7700];
+
+/* ---------- 지도 (시안 C): 벡터 지도 — 바탕은 회색, 라벨은 역·공원·큰 건물·동 이름만 ---------- */
+// OpenFreeMap: 무료·상업 이용 가능·키 없음 (OpenStreetMap 데이터). 불러오지 못하면 회색 Leaflet 지도로 대신 보여줌.
+const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
+const MAPC = {bg:'#F1EEE9', water:'#D7D3CB', park:'#E2DED6', land:'#ECE8E1', building:'#E7E3DC', road:'#FFFFFF', rail:'#D3CDC4', label:'#6F6862', halo:'#F1EEE9'};
+function loadGL(){
+  if(window.maplibregl) return Promise.resolve();
+  if(loadGL.p) return loadGL.p;
+  loadGL.p = new Promise((res, rej) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css'; document.head.appendChild(l);
+    const sc = document.createElement('script'); sc.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
+    sc.onload = () => res(); sc.onerror = () => { loadGL.p = null; rej(new Error('maplibre')); };
+    document.head.appendChild(sc);
+  });
+  return loadGL.p;
+}
+function styleMapC(map){
+  const style = map.getStyle(); if(!style) return;
+  let src = null, font = null;
+  for(const [k, v] of Object.entries(style.sources || {})) if(v.type === 'vector'){ src = k; break; }
+  (style.layers || []).forEach(l => {
+    const sl = l['source-layer'] || '', id = l.id;
+    try{
+      if(l.type === 'background') map.setPaintProperty(id, 'background-color', MAPC.bg);
+      else if(l.type === 'fill'){
+        if(sl === 'water') map.setPaintProperty(id, 'fill-color', MAPC.water);
+        else if(sl === 'park' || sl === 'landcover') map.setPaintProperty(id, 'fill-color', MAPC.park);
+        else if(sl === 'building') map.setPaintProperty(id, 'fill-color', MAPC.building);
+        else if(sl === 'landuse') map.setPaintProperty(id, 'fill-color', MAPC.land);
+        else if(sl === 'aeroway') map.setPaintProperty(id, 'fill-color', MAPC.land);
+        if(l.paint && l.paint['fill-outline-color'] !== undefined) map.setPaintProperty(id, 'fill-outline-color', 'rgba(0,0,0,0)');
+        if(l.paint && l.paint['fill-pattern'] !== undefined) map.setLayoutProperty(id, 'visibility', 'none');
+      } else if(l.type === 'line'){
+        if(sl === 'transportation') map.setPaintProperty(id, 'line-color', /rail|transit|subway/.test(id) ? MAPC.rail : MAPC.road);
+        else if(sl === 'waterway') map.setPaintProperty(id, 'line-color', MAPC.water);
+        else map.setLayoutProperty(id, 'visibility', 'none');
+      } else if(l.type === 'symbol'){
+        if(!font && l.layout && l.layout['text-font']) font = l.layout['text-font'];
+        map.setLayoutProperty(id, 'visibility', 'none');
+      } else if(l.type === 'fill-extrusion' || l.type === 'hillshade' || l.type === 'raster'){
+        map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    }catch(e){}
+  });
+  if(!src) return;
+  font = font || ['Noto Sans Regular'];
+  const nm = ['coalesce', ['get', 'name:ko'], ['get', 'name'], ['get', 'name_en']];
+  const label = (id, layer, filter, minzoom, size, color, extra) => {
+    if(map.getLayer(id)) return;
+    try{ map.addLayer({id, type:'symbol', source:src, 'source-layer':layer, minzoom, filter,
+      layout:Object.assign({'text-field':nm, 'text-font':font, 'text-size':size, 'text-max-width':7, 'text-padding':6}, extra || {}),
+      paint:{'text-color':color || MAPC.label, 'text-halo-color':MAPC.halo, 'text-halo-width':1.6}}); }catch(e){}
+  };
+  label('c-place', 'place', ['in', ['get', 'class'], ['literal', ['suburb', 'quarter', 'neighbourhood']]], 12, 12, '#9C948C');
+  label('c-water', 'water_name', ['has', 'name'], 13, 12);
+  label('c-park', 'poi', ['==', ['get', 'class'], 'park'], 13, 12);
+  label('c-landmark', 'poi', ['in', ['get', 'subclass'], ['literal', ['department_store', 'mall', 'exhibition_centre', 'stadium', 'townhall', 'university', 'hospital']]], 14, 11.5);
+  try{
+    if(!map.getLayer('c-station-dot')) map.addLayer({id:'c-station-dot', type:'circle', source:src, 'source-layer':'poi', minzoom:12,
+      filter:['==', ['get', 'class'], 'railway'], paint:{'circle-radius':5, 'circle-color':'#8A837C', 'circle-stroke-color':'#FFFFFF', 'circle-stroke-width':2}});
+  }catch(e){}
+  label('c-station', 'poi', ['==', ['get', 'class'], 'railway'], 12, 12, '#5E5751', {'text-offset':[0, 1.0], 'text-anchor':'top'});
+}
+// 두 지도 엔진(벡터/Leaflet)을 같은 방식으로 다루기 위한 얇은 포장
+function mapMarkerEl(html, onClick, z){
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `width:0;height:0;position:relative;z-index:${z || 1}`;
+  wrap.innerHTML = html;
+  if(onClick){
+    const stop = e => { e.stopPropagation(); };
+    wrap.addEventListener('mousedown', stop); wrap.addEventListener('touchstart', stop, {passive:true});
+    wrap.addEventListener('click', e => { e.stopPropagation(); Customer._pinTap = Date.now(); onClick(); });
+  }
+  return wrap;
+}
+function glAdapter(m){
+  return {
+    kind:'gl', raw:m,
+    marker(lat, lng, html, onClick, z){ const mk = new maplibregl.Marker({element:mapMarkerEl(html, onClick, z), anchor:'center'}).setLngLat([lng, lat]).addTo(m); mk.getElement().style.zIndex = z || 1; return mk; },
+    fit(pts){
+      if(pts.length === 1) return m.jumpTo({center:[pts[0].lng, pts[0].lat], zoom:16});
+      const lats = pts.map(p => p.lat), lngs = pts.map(p => p.lng);
+      m.fitBounds([[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]], {padding:{top:130, bottom:200, left:50, right:50}, maxZoom:16, duration:0});
+    },
+    view(lat, lng, z){ m.easeTo({center:[lng, lat], zoom:z}); },
+    zoom(){ return m.getZoom(); },
+    onBg(fn){ m.on('click', () => { if(Date.now() - (Customer._pinTap || 0) > 400) fn(); }); },
+    remove(){ m.remove(); }
+  };
+}
+function leafletAdapter(m){
+  return {
+    kind:'leaflet',
+    marker(lat, lng, html, onClick, z){
+      const mk = L.marker([lat, lng], {icon:L.divIcon({className:'', html, iconSize:[0,0]}), zIndexOffset:z || 0, interactive:!!onClick, keyboard:!!onClick}).addTo(m);
+      if(onClick) mk.on('click', e => { L.DomEvent.stopPropagation(e); Customer._pinTap = Date.now(); onClick(); });
+      return mk;
+    },
+    fit(pts){
+      if(pts.length === 1) return m.setView([pts[0].lat, pts[0].lng], 16);
+      m.fitBounds(L.latLngBounds(pts.map(p => [p.lat, p.lng])), {paddingTopLeft:[50, 130], paddingBottomRight:[50, 200], maxZoom:16});
+    },
+    view(lat, lng, z){ m.setView([lat, lng], z); },
+    zoom(){ return m.getZoom(); },
+    onBg(fn){ m.on('click', () => { if(Date.now() - (Customer._pinTap || 0) > 400) fn(); }); },
+    remove(){ m.remove(); }
+  };
+}
 const mapTiles = () => L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'});
 
 /* ---------- 혜택 계산 도우미 ---------- */
@@ -956,15 +1066,40 @@ const Customer = {
     document.querySelectorAll('[data-mcat]').forEach(b => b.onclick = () => { f.cat = f.cat === b.dataset.mcat ? '전체' : b.dataset.mcat; Customer.renderMap(); });
     const mq = $('#m-q'); mq.oninput = () => { f.q = mq.value; clearTimeout(mq._t); mq._t = setTimeout(() => Customer.drawPins(true), 300); };
     $('#m-loc').onclick = Customer.locateMe;
-    try{ await loadLeaflet(); }
-    catch(e){ $('#lmap').innerHTML = '<div class="empty2" style="padding-top:160px">지도를 불러오지 못했어요.<br>인터넷 연결을 확인하고 다시 열어주세요.</div>'; return; }
-    if(location.hash !== '#map') return;
     if(Customer.map){ try{ Customer.map.remove(); }catch(e){} Customer.map = null; }
-    const m = Customer.map = L.map('lmap', {zoomControl:false, attributionControl:true}).setView(ILSAN_CENTER, 14);
-    mapTiles().addTo(m);
-    m.on('click', () => { Customer.mapSel = null; Customer.drawPins(); });
+    Customer.pins = []; Customer.meMarker = null;
+    const A = await Customer.mountMap();
+    if(!A){ $('#lmap').innerHTML = '<div class="empty2" style="padding-top:160px">지도를 불러오지 못했어요.<br>인터넷 연결을 확인하고 다시 열어주세요.</div>'; return; }
+    if(location.hash !== '#map'){ A.remove(); return; }
+    Customer.map = A;
+    A.onBg(() => { Customer.mapSel = null; Customer.drawPins(); });
     Customer.drawPins(true);
     if(Geo.last) Customer.showMe(false);
+  },
+  // 벡터 지도(시안 C) 먼저, 안 되면 회색 Leaflet 지도
+  async mountMap(){
+    try{
+      await loadGL();
+      const m = new maplibregl.Map({container:'lmap', style:MAP_STYLE_URL, center:[ILSAN_CENTER[1], ILSAN_CENTER[0]], zoom:13.5,
+        attributionControl:{compact:true}, dragRotate:false, pitchWithRotate:false,
+        localIdeographFontFamily:"'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',sans-serif"});
+      m.touchZoomRotate.disableRotation();
+      const ok = await new Promise(res => {
+        let done = false; const finish = v => { if(!done){ done = true; res(v); } };
+        m.on('style.load', () => { styleMapC(m); finish(true); });
+        m.on('error', e => { if(!m.isStyleLoaded()) finish(false); });
+        setTimeout(() => finish(m.isStyleLoaded()), 9000);
+      });
+      if(ok) return glAdapter(m);
+      try{ m.remove(); }catch(e){}
+    }catch(e){}
+    try{
+      await loadLeaflet();
+      $('#lmap').innerHTML = '';
+      const lm = L.map('lmap', {zoomControl:false, attributionControl:true}).setView(ILSAN_CENTER, 14);
+      mapTiles().addTo(lm);
+      return leafletAdapter(lm);
+    }catch(e){ return null; }
   },
   mapStores(){
     const f = Customer.mapFilter, q = f.q.trim().toLowerCase();
@@ -972,9 +1107,9 @@ const Customer = {
       && (!q || (s.name + s.category + s.area + s.offers.map(o => o.title).join(' ')).toLowerCase().includes(q)));
   },
   drawPins(fit){
-    const m = Customer.map; if(!m) return;
-    if(Customer.pinLayer) Customer.pinLayer.remove();
-    const layer = Customer.pinLayer = L.layerGroup().addTo(m);
+    const A = Customer.map; if(!A) return;
+    (Customer.pins || []).forEach(p => { try{ p.remove(); }catch(e){} });
+    Customer.pins = [];
     const all = Customer.mapStores(), placed = all.filter(s => s.lat != null && s.lng != null);
     placed.forEach(s => {
       const sel = Customer.mapSel === s.id, r = storeLeft(s);
@@ -984,13 +1119,9 @@ const Customer = {
       const SHOP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2E221B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 5.5 4h13L20 9"/><path d="M5 9h14v11H5z"/></svg>';
       const html = sel ? `<div class="mpin sel ${kind}">${MOLE(32)}${esc(short)}${r ? ` · 쿠폰 ${r}` : ''}</div>`
                  : r ? `<div class="mpin deal">${TICKET}${r}</div>` : `<div class="mpin partner">${SHOP}</div>`;
-      const mk = L.marker([s.lat, s.lng], {icon:L.divIcon({className:'', html, iconSize:[0,0]}), zIndexOffset: sel ? 1000 : 0, keyboard:true, title:s.name}).addTo(layer);
-      mk.on('click', e => { L.DomEvent.stopPropagation(e); Customer.mapSel = s.id; Customer.drawPins(); });
+      Customer.pins.push(A.marker(s.lat, s.lng, html, () => { Customer.mapSel = s.id; Customer.drawPins(); }, sel ? 1000 : (r ? 20 : 10)));
     });
-    if(fit && placed.length){
-      const b = L.latLngBounds(placed.map(s => [s.lat, s.lng]));
-      if(placed.length === 1) m.setView(b.getCenter(), 16); else m.fitBounds(b, {padding:[70, 70], maxZoom:16});
-    }
+    if(fit && placed.length) A.fit(placed);
     const sel = placed.find(s => s.id === Customer.mapSel), missing = all.length - placed.length, bottom = $('#m-bottom');
     if(sel){
       const first = sel.offers.find(o => leftOf(o) > 0) || sel.offers[0], dist = Geo.label(sel);
@@ -1012,10 +1143,10 @@ const Customer = {
     Customer.showMe(true);
   },
   showMe(pan){
-    const m = Customer.map; if(!m || !Geo.last) return;
-    if(Customer.meMarker) Customer.meMarker.remove();
-    Customer.meMarker = L.marker([Geo.last.lat, Geo.last.lng], {icon:L.divIcon({className:'', html:'<div class="medot" role="img" aria-label="내 위치"></div>', iconSize:[0,0]}), interactive:false}).addTo(m);
-    if(pan) m.setView([Geo.last.lat, Geo.last.lng], Math.max(m.getZoom(), 15));
+    const A = Customer.map; if(!A || !Geo.last) return;
+    if(Customer.meMarker){ try{ Customer.meMarker.remove(); }catch(e){} }
+    Customer.meMarker = A.marker(Geo.last.lat, Geo.last.lng, '<div class="medot" role="img" aria-label="내 위치"></div>', null, 5);
+    if(pan) A.view(Geo.last.lat, Geo.last.lng, Math.max(A.zoom(), 15));
     Customer.drawPins();
   },
   geoHelp(kind){
